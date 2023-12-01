@@ -1,6 +1,12 @@
 # Manage project dependencies ------
 # the following will prompt you to install the various packages used in the study 
 # install.packages("renv")
+
+# EF. HUS dependent installs:
+# .libPaths() should contain as first:
+# "C:/Users/HUS72904793/Documents/GitHub/EHDEN/THISSTUDY/renv/library/R-4.2/x86_64-w64-mingw32"
+# remotes::install_local("c:/Users/HUS72904793/Documents/GitHub/SqlRender", force = TRUE)
+
 renv::activate()
 renv::restore()
 
@@ -31,17 +37,20 @@ library(DrugUtilisation)
 
 # Set the short name/acronym for your database (to be used in the titles of reports, etc) -----
 # Please do not use omop, cdm for db.name
-db.name <-"..."
+db.name <-"HUS"
 
 # Set output folder locations -----
 # the path to a folder where the results from this analysis will be saved
 output.folder <- here::here("Results", db.name)
 
 # database connection details
-server     <- "..."
+source("C:/Users/HUS72904793/Documents/GitHub/EHDEN/.0_setUserDetails.R")
+connectionString <- Sys.getenv("HUSOMOPCONSTR")
+server     <- Sys.getenv("HUSSERVER")
+database   <- Sys.getenv("HUSDB")
 server_dbi <- "..."
-user       <- "..."
-password   <- "..."
+user       <- Sys.getenv("HUSOMOPUSER")
+password   <- Sys.getenv("HUSOMOPPWD")
 port       <- "..." 
 host       <- "..." 
 
@@ -49,28 +58,41 @@ host       <- "..."
 # In this study we also use the DBI package to connect to the database
 # set up the dbConnect details below (see https://dbi.r-dbi.org/articles/dbi for more details)
 # you may need to install another package for this (although RPostgres is included with renv in case you are using postgres)
-db <- DBI::dbConnect("...",
-                dbname = server_dbi,
-                port = port,
-                host = host, 
-                user = user, 
-                password = password)
+library("odbc")
+#db <- DBI::dbConnect(odbc::odbc(),
+#                dbname = server_dbi,
+#                port = port,
+#                host = host, 
+#                user = user, 
+#                password = password)
+db <- dbConnect(odbc::odbc(),
+                Driver = "{ODBC DRIVER 18 for SQL Server}",
+                Server = server,  
+                Database = database,
+                UID = user, 
+                PWD = password,
+                dbname = "HUS"
+                #dbms.name = "synapse"
+                #TrustServerCertificate="yes",
+                #Encrypt="True",
+                #Port = 1433
+)
 
 # Set database details -----
 # The name of the schema that contains the OMOP CDM with patient-level data
-cdm_database_schema <- "..."
+cdm_database_schema <- "omop54"
 
 # The name of the schema that contains the vocabularies 
 # (often this will be the same as cdm_database_schema)
-vocabulary_database_schema <- "..."
+vocabulary_database_schema <- "omop54"
 
 # The name of the schema where results tables will be created 
-results_database_schema <- "..."
+results_database_schema <- "ohdsieric"
 
 # stem table description use something short and informative such as ehdenwp2 or your initials
 # Note, if there is an existing table in your results schema with the same names it will be overwritten 
 # needs to be in lower case and NOT more than 10 characters
-table_stem <- "..."
+table_stem <- "ehdenwp2"
 
 # create cdm reference ---- DO NOT REMOVE "PREFIX" ARGUMENT IN THIS CODE
 cdm <- CDMConnector::cdm_from_con(con = db, 
@@ -81,9 +103,18 @@ cdm <- CDMConnector::cdm_from_con(con = db,
 
 # to check whether the DBI connection is correct, 
 # running the next line should give you a count of your person table
-cdm$person %>% 
-  dplyr::tally() %>% 
-  CDMConnector::computeQuery()
+
+cdm <- CDMConnector::cdm_from_con(con = db, 
+                                  cdm_schema = cdm_database_schema,
+                                  write_schema = c("schema" = results_database_schema, 
+                                                   "prefix" = table_stem),
+                                  cdm_name = db.name)
+
+# to check whether the DBI connection is correct, 
+# running the next line should give you a count of your person table
+cdm$person %>% dplyr::tally()
+#  dplyr::tally() %>% 
+#  CDMConnector::computeQuery()
 
 # Set study details -----
 # if you do not have suitable data from 2000-01-01 
