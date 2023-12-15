@@ -305,7 +305,9 @@ medianResults <- dplyr::bind_rows(
   medkmcombined_ageA ,
   medkmcombined_age_sex,
   predmedmeanfinal,
+  predmedmeanfinalsex,
   predmedmeanfinalsexS,
+  predmedmeanfinalage,
   predmedmeanfinalageS) %>%
   dplyr::mutate(Database = db.name) %>% 
   dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male")) 
@@ -445,7 +447,8 @@ AnalysisRunSummary <-
 
 # snapshot the cdm
 snapshotcdm <- CDMConnector::snapshot(cdm) %>% 
-  mutate(Database = CDMConnector::cdm_name(cdm))
+  mutate(Database = CDMConnector::cdm_name(cdm)) %>% 
+  mutate(StudyPeriodStartDate = startdate)
 
 #get attrition for the cohorts and add cohort identification
 attritioncdm <- CDMConnector::cohort_attrition(cdm$outcome) %>% 
