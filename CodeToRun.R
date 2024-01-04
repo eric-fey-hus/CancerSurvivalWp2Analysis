@@ -58,6 +58,9 @@ host       <- "..."
 # In this study we also use the DBI package to connect to the database
 # set up the dbConnect details below (see https://dbi.r-dbi.org/articles/dbi for more details)
 # you may need to install another package for this (although RPostgres is included with renv in case you are using postgres)
+
+# OPTION 1: odbc
+
 library("odbc")
 #db <- DBI::dbConnect(odbc::odbc(),
 #                dbname = server_dbi,
@@ -77,6 +80,29 @@ db <- dbConnect(odbc::odbc(),
                 #Encrypt="True",
                 #Port = 1433
 )
+#odbc lead to error message, see github
+#Thus, lets try DatabaseConnector, from Pasi's post https://teams.microsoft.com/l/message/19:34d73d6b-4a4f-4ba3-a3bf-dbcc461af9d2_36d30150-5097-40f8-b279-317b1e37467a@unq.gbl.spaces/1701152773741?context=%7B%22contextType%22%3A%22chat%22%7D
+
+# OPTION 2: 
+
+# Connection worked after installing 
+# renv:install("DatabaseConnector")
+# renv:install("Andromeda")
+# Warning message:
+#   Not all functionality is supported when DatabaseConnector as your database driver! Some issues may occur.
+
+jarpath <- "C:/Users/HUS72904793/Documents/jars" 
+Sys.setenv("DATABASECONNECTOR_JAR_FOLDER" = jarpath)
+source("../.0_setUserDetails.R")
+library("DatabaseConnector")
+connectionDetails <- DatabaseConnector::createConnectionDetails(dbms = "synapse",
+                                             user = Sys.getenv("HUSOMOPUSER"),
+                                             password = Sys.getenv("HUSOMOPPWD"),
+                                             connectionString = Sys.getenv("HUSOMOPCONSTR"),
+)
+db = DatabaseConnector::connect(connectionDetails)
+
+
 
 # Set database details -----
 # The name of the schema that contains the OMOP CDM with patient-level data
@@ -92,7 +118,7 @@ results_database_schema <- "ohdsieric"
 # stem table description use something short and informative such as ehdenwp2 or your initials
 # Note, if there is an existing table in your results schema with the same names it will be overwritten 
 # needs to be in lower case and NOT more than 10 characters
-table_stem <- "ehdenwp2"
+table_stem <- "ehdenwp2_dc"
 
 # create cdm reference ---- DO NOT REMOVE "PREFIX" ARGUMENT IN THIS CODE
 cdm <- CDMConnector::cdm_from_con(con = db, 
@@ -113,8 +139,9 @@ cdm <- CDMConnector::cdm_from_con(con = db,
 # to check whether the DBI connection is correct, 
 # running the next line should give you a count of your person table
 cdm$person %>% dplyr::tally()
-#  dplyr::tally() %>% 
-#  CDMConnector::computeQuery()
+# This one only workes if usgin OPTION2 DatabaseConnector:
+cdm$person %>% dplyr::tally() %>% 
+  CDMConnector::computeQuery()
 
 # Set study details -----
 # if you do not have suitable data from 2000-01-01 
