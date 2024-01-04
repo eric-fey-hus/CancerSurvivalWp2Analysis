@@ -8,7 +8,7 @@
 # remotes::install_local("c:/Users/HUS72904793/Documents/GitHub/SqlRender", force = TRUE)
 
 renv::activate()
-renv::restore()
+#renv::restore()
 
 # Load packages ------
 library(CirceR)
@@ -121,15 +121,6 @@ results_database_schema <- "ohdsieric"
 table_stem <- "ehdenwp2_dc"
 
 # create cdm reference ---- DO NOT REMOVE "PREFIX" ARGUMENT IN THIS CODE
-cdm <- CDMConnector::cdm_from_con(con = db, 
-                                  cdm_schema = cdm_database_schema,
-                                  write_schema = c("schema" = results_database_schema, 
-                                                   "prefix" = table_stem),
-                                  cdm_name = db.name)
-
-# to check whether the DBI connection is correct, 
-# running the next line should give you a count of your person table
-
 cdm <- CDMConnector::cdm_from_con(con = db, 
                                   cdm_schema = cdm_database_schema,
                                   write_schema = c("schema" = results_database_schema, 
