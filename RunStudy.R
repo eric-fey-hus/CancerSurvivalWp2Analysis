@@ -34,13 +34,15 @@ cdm <- CDMConnector::generateConceptCohortSet(
   end = "observation_period_end_date",
   overwrite = TRUE )
 
-# add in prior history
-cdm$outcome <- cdm$outcome %>% 
-  PatientProfiles::addPriorObservation(
-    cdm = cdm,
-    indexDate = "cohort_start_date")
+
 
 if(priorhistory == TRUE){
+  
+  # add in prior history
+  cdm$outcome <- cdm$outcome %>% 
+    PatientProfiles::addPriorObservation(
+      cdm = cdm,
+      indexDate = "cohort_start_date")
   
   #for those with prior history remove those with less than 365 days of prior history
   cdm$outcome <- cdm$outcome %>% 
@@ -62,7 +64,8 @@ info(logger, "INSTANTIATE EXCLUSION ANY MALIGNANT NEOPLASTIC DISEASE (EX SKIN CA
 
 codelistExclusion <- CodelistGenerator::codesFromConceptSet(here::here("1_InstantiateCohorts", "Exclusion"), cdm)
 # add cancer concepts to exclusion concepts to make sure we capture all exclusions
-codelistExclusion <- list(Reduce(union_all, c(cancer_concepts, codelistExclusion)))
+codelistExclusion <- list(unique(Reduce(union_all, c(cancer_concepts, codelistExclusion))))
+
 #rename list of concepts
 names(codelistExclusion) <- "anymalignancy"
 
@@ -179,7 +182,8 @@ cdm$outcome <- cdm$outcome %>%
            sex,
            prior_observation,
            future_observation,
-           age_gr ,                  
+           age_gr ,   
+           age,
            death_date,
            observation_period_end_date,  
            observation_period_end_date_2019,
@@ -214,8 +218,40 @@ cdm$outcome <- CDMConnector::recordCohortAttrition(cohort = cdm$outcome,
 Pop <- cdm$outcome %>% dplyr::collect() 
 
 # Setting up information for extrapolation methods to be used ---
-extrapolations <- c("gompertz", "weibullph" , "exp", "llogis", "lnorm", "gengamma", "spline1", "spline3")
-extrapolations_formatted <- c("Gompertz", "WeibullPH" ,"Exponential", "Log-logistic", "Log-normal", "Generalised Gamma", "Spline (1 knot)", "Spline (3 knots)")
+extrapolations <- c("gompertz", "weibullph" , "exp", "llogis", "lnorm", "gengamma",
+                    "spline1", 
+                    "spline3")
+
+extrapolations_formatted <- c("Gompertz", 
+                              "WeibullPH" ,
+                              "Exponential", 
+                              "Log-logistic",
+                              "Log-normal",
+                              "Generalised Gamma", 
+                              "Spline (1 knot)",
+                              "Spline (3 knots)")
+
+# Setting up information for extrapolation methods to be used ---
+# extrapolations <- c("gompertz", "weibullph" , "exp", "llogis", "lnorm", "gengamma",
+#                     "spline1", 
+#                     "spline3",
+#                     "spline1o", 
+#                     "spline3o",
+#                     "spline1n", 
+#                     "spline3n")
+# 
+# extrapolations_formatted <- c("Gompertz", 
+#                               "WeibullPH" ,
+#                               "Exponential", 
+#                               "Log-logistic",
+#                               "Log-normal",
+#                               "Generalised Gamma", 
+#                               "Spline Hazard (1 knot)",
+#                               "Spline Hazard (3 knots)" ,
+#                               "Spline Odds (1 knot)",
+#                               "Spline Odds (3 knots)" ,
+#                               "Spline Normal (1 knot)",
+#                               "Spline Normal (3 knots)")
 
 # setting up time for extrapolation ----
 t <- seq(0, timeinyrs*365.25, by=40)
