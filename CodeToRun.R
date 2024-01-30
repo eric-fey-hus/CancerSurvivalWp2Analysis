@@ -10,6 +10,10 @@
 renv::activate()
 #renv::restore()
 
+# install HUS local copy of SqlRender that includes substitutions for Azure Synapse
+# Note: the location is different in Acamedic
+# devtools::install(pkg = "C:/Users/HUS72904793/Documents/GitHub/SqlRender")
+
 # Load packages ------
 library(CirceR)
 library(here)
