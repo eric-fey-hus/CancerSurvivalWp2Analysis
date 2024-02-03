@@ -10,6 +10,10 @@
 renv::activate()
 #renv::restore()
 
+# install HUS local copy of SqlRender that includes substitutions for Azure Synapse
+# Note: the location is different in Acamedic
+# devtools::install(pkg = "C:/Users/HUS72904793/Documents/GitHub/SqlRender")
+
 # Load packages ------
 library(CirceR)
 library(here)
@@ -146,6 +150,12 @@ startdate <- "2000-01-01"
 # set as TRUE.
 priorhistory <- TRUE
 
+# Truncated time analysis ------
+# By setting this to TRUE this will perform an additional analysis where extrapolation methods will extrapolate on the observed data truncated at 2 years NOT on the full observed data. 
+# If FALSE this additional analysis will not be run.
+PerformTruncatedAnalysis <- TRUE
+
+#Set output folder again (just because!)
 output.folder <- "results"
 
 # Run the study ------
