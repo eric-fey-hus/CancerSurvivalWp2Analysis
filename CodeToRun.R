@@ -57,6 +57,7 @@ user       <- Sys.getenv("HUSOMOPUSER")
 password   <- Sys.getenv("HUSOMOPPWD")
 port       <- "..." 
 host       <- "..." 
+dbms       <- "..." # https://dbi.r-dbi.org/articles/DBI.html for R interface with database management system
 
 # Specify cdm_reference via DBI connection details -----
 # In this study we also use the DBI package to connect to the database

@@ -57,20 +57,19 @@ info(logger, "SUBSETTING CDM")
 cdm <- CDMConnector::cdmSubsetCohort(cdm, "outcome")
 info(logger, "SUBSETTED CDM")
 
-# this step adds in a filter which only includes patients who are present in IMASIS's tumour registry
-if(db.name == "IMASIS"){
-  
-  cdm$outcome <- cdm$outcome %>% 
-    dplyr::left_join(cdm$condition_occurrence %>%
-                       select("person_id",  "condition_type_concept_id") %>%
-                       distinct(),
-                     by = c("subject_id"= "person_id")) %>% 
-    dplyr::filter(condition_type_concept_id == 32879 )
-
-  cdm$outcome <- CDMConnector::recordCohortAttrition(cohort = cdm$outcome,
-                                                     reason="Removing patients in registry" )
-}
-
+# # this step adds in a filter which only includes patients who are present in IMASIS's tumour registry
+# if(db.name == "IMASIS"){
+#   
+#   cdm$outcome <- cdm$outcome %>% 
+#     dplyr::left_join(cdm$condition_occurrence %>%
+#                        select("person_id",  "condition_type_concept_id") %>%
+#                        distinct(),
+#                      by = c("subject_id"= "person_id")) %>% 
+#     dplyr::filter(condition_type_concept_id == 32879 )
+# 
+#   cdm$outcome <- CDMConnector::recordCohortAttrition(cohort = cdm$outcome,
+#                                                      reason="Removing patients in registry" )
+# }
 
 # instantiate exclusion any prior history of malignancy
 info(logger, "INSTANTIATE EXCLUSION ANY MALIGNANT NEOPLASTIC DISEASE (EX SKIN CANCER)")
@@ -102,6 +101,40 @@ cdm$outcome <- cdm$outcome %>%
     days = FALSE,
     window = list(c(-Inf, -1))
   )
+
+# remove any patients with other cancers on same date not in our list of cancers
+# get the any malignancy codelist
+codelistExclusion1 <- CodelistGenerator::codesFromConceptSet(here::here("1_InstantiateCohorts", "Exclusion"), cdm)
+
+# merge all concepts for all cancers together
+codes2remove <- list(unique(Reduce(union_all, c(cancer_concepts))))
+names(codes2remove) <- "allmalignancy"
+
+# remove lists from our cancers of interest from the any malignancy list
+codes2remove <- list(codelistExclusion1$cancerexcludnonmelaskincancer[!codelistExclusion1$cancerexcludnonmelaskincancer %in% codes2remove$allmalignancy])
+names(codes2remove) <- "allmalignancy"
+
+#instantiate any malignancy codes minus our cancers of interest
+cdm <- CDMConnector::generateConceptCohortSet(cdm = cdm,
+                                              conceptSet = codes2remove ,
+                                              name = "allmalignancy",
+                                              overwrite = TRUE)
+
+# create a flag of anyone with MALIGNANT NEOPLASTIC DISEASE (excluding skin cancer) ON cancer diagnosis date but removing our codes of interest
+# in doing so we are capturing people with other cancers on the same day and wont exclude everyone
+cdm$outcome <- cdm$outcome %>%
+  PatientProfiles::addCohortIntersect(
+    cdm = cdm,
+    targetCohortTable = "allmalignancy",
+    targetStartDate = "cohort_start_date",
+    targetEndDate = "cohort_end_date",
+    flag = TRUE,
+    count = FALSE,
+    date = FALSE,
+    days = FALSE,
+    window = list(c(0, 0))
+  )
+
 
 # get data variables
 cdm$outcome <- cdm$outcome %>%
@@ -169,6 +202,10 @@ if( "Prostate" %in% names(cancer_concepts) == TRUE){
     dplyr::filter(!(sex == "Female" & cohort_definition_id == prostateID))
 }
 
+#update the attrition after those outside the study period are removed
+cdm$outcome <- CDMConnector::recordCohortAttrition(cohort = cdm$outcome,
+                                                   reason="Exclude patients outside study period" )
+
 # remove those with any a prior malignancy (apart from skin cancer in prior history)
 cdm$outcome <- cdm$outcome %>%
   dplyr::filter(anymalignancy != 1)
@@ -185,32 +222,22 @@ cdm$outcome <- cdm$outcome %>%
 cdm$outcome <- CDMConnector::recordCohortAttrition(cohort = cdm$outcome,
                                                     reason="Exclude patients with death date same as cancer diagnosis date" )
 
-
-# remove any people who have multiple cancer diagnosis on the same day
+# removes any patients with multiple cancers on same date (just the cancers of interest at the moment)
 cdm$outcome <- cdm$outcome %>%
-  dplyr::group_by(subject_id, 
-           cohort_definition_id,
-           cohort_start_date,
-           cohort_end_date,
-           sex,
-           prior_observation,
-           future_observation,
-           age_gr ,   
-           age,
-           death_date,
-           observation_period_end_date,  
-           observation_period_end_date_2019,
-           status,                          
-           time_days,
-           time_years,
-           sex_age_gp) %>%
-  dplyr::summarise(count = max(1, na.rm = TRUE), .groups = "drop") %>%
-  dplyr::filter(count == 1) %>%
-  dplyr::ungroup() %>% 
-  dplyr::select(!c(count))
+  dplyr::distinct(subject_id, .keep_all = TRUE)
+
+cdm$outcome <- cdm$outcome %>%
+  dplyr::filter(flag_allmalignancy_0_to_0 != 1)
 
 cdm$outcome <- CDMConnector::recordCohortAttrition(cohort = cdm$outcome,
                                                     reason="Exclude patients with multiple cancers on different sites diagnosed on same day" )
+
+# remove those with no sex
+cdm$outcome <- cdm$outcome %>%
+  dplyr::filter(!(sex == "None" | sex == "none"))
+
+cdm$outcome <- CDMConnector::recordCohortAttrition(cohort = cdm$outcome,
+                                                   reason="Exclude patients with no sex defined" )
 
 # only run analysis where we have counts more than 200 ----
 cancer_cohorts <- CDMConnector::cohortSet(cdm$outcome) %>%
@@ -246,6 +273,72 @@ cdm$outcome <- CDMConnector::recordCohortAttrition(cohort = cdm$outcome,
 
 # collect to use for analysis
 Pop <- cdm$outcome %>% dplyr::collect()
+
+info(logger, 'SNAPSHOT CDM')
+print(paste0("SNAPSHOT CDM")) 
+
+# snapshot the cdm
+if(db.name != "CRN"){ 
+  snapshotcdm <- CDMConnector::snapshot(cdm) %>% 
+    mutate(Database = CDMConnector::cdm_name(cdm)) %>% 
+    mutate(StudyPeriodStartDate = startdate)
+  
+} else {
+  
+  print(paste0("SNAPSHOT CDM for CRN")) 
+  
+  npersons <- cdm$person %>% 
+    dplyr::tally() %>% 
+    dplyr::collect()
+  
+  early_obs <- cdm$observation_period %>%
+    summarise(earliest_start_date = min(observation_period_start_date, na.rm = TRUE)) %>%
+    collect()
+  
+  latest_obs <- cdm$observation_period %>%
+    summarise(latest_start_date = max(observation_period_end_date, na.rm = TRUE)) %>%
+    collect()
+  
+  observation_per_count <- cdm$observation_period %>% 
+    count() %>% collect()
+  
+  snapshotcdm1 <- cdm$cdm_source %>%  dplyr::collect()
+  snapshotcdm1 <- snapshotcdm1 %>% 
+    mutate(cdm_name = db.name,
+           Database = db.name,
+           person_count = npersons,
+           StudyPeriodStartDate = startdate,
+           snapshot_date = Sys.Date(),
+           earliest_observation_period_start_date = early_obs,
+           latest_observation_period_end_date = latest_obs ,
+           observation_period_count = observation_per_count
+    ) %>% 
+    select(-c(cdm_source_abbreviation,
+              cdm_etl_reference,
+              source_release_date )) %>% 
+    rename(cdm_description = source_description,
+           cdm_documentation_reference = source_documentation_reference
+    )
+  
+  
+}
+
+info(logger, 'GETTING COHORT ATTRITION')
+print(paste0("GETTING COHORT ATTRITION")) 
+#get attrition for the cohorts and add cohort identification
+attritioncdm <- CDMConnector::cohort_attrition(cdm$outcome) %>% 
+  dplyr::left_join(
+    cohortSet(cdm$outcome) %>% select(c("cohort_definition_id", "cohort_name")),
+    by = join_by(cohort_definition_id),
+    relationship = "many-to-many",
+    keep = FALSE
+  ) %>% 
+  dplyr::relocate(cohort_name) %>% 
+  dplyr::mutate(Database = cdm_name(cdm)) %>% 
+  dplyr::rename(Cancer = cohort_name)
+
+info(logger, 'GOT COHORT ATTRITION')
+print(paste0("GOT COHORT ATTRITION")) 
 
 # Setting up information for extrapolation methods to be used ---
 extrapolations <- c("gompertz", 
@@ -365,12 +458,14 @@ print(paste0("6 of 6: TABLE ONE CHARACTERISATION RAN"))
 }
 
 
-
+info(logger, 'SAVING RESULTS')
 print(paste0("SAVING RESULTS")) 
 ##################################################################
 # Tidy up results and save ----
 
 if(PerformTruncatedAnalysis == TRUE){
+  
+if(db.name != "ECI"){ 
 # survival KM and extrapolated data -----
 survivalResults <- dplyr::bind_rows(
   observedkmcombined ,  
@@ -389,8 +484,7 @@ survivalResults <- dplyr::bind_rows(
   extrapolatedfinalageSt) %>%
   dplyr::mutate(Database = db.name) %>% 
   dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male")) %>% 
-  dplyr::select(!c(n.risk, n.event, n.censor, std.error)) %>% 
-  dplyr::filter(time != 0)
+  dplyr::select(!c(n.risk, n.event, n.censor, std.error)) 
 
 #risk table ----
 riskTableResults <- dplyr::bind_rows(
@@ -478,6 +572,87 @@ ExtrpolationParameters <- dplyr::bind_rows(
 
 } else {
   
+  # survival KM and extrapolated data -----
+  survivalResults <- dplyr::bind_rows(
+    observedkmcombined ,  
+    observedkmcombined_age , 
+    extrapolatedfinal,
+    extrapolatedfinalage,
+    extrapolatedfinalageS,
+    extrapolatedfinalt,
+    extrapolatedfinalaget,
+    extrapolatedfinalageSt) %>%
+    dplyr::mutate(Database = db.name) %>% 
+    dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male")) %>% 
+    dplyr::select(!c(n.risk, n.event, n.censor, std.error)) 
+  
+  #risk table ----
+  riskTableResults <- dplyr::bind_rows(
+    risktableskm , 
+    risktableskm_age 
+  ) %>%
+    dplyr::mutate(Database = db.name) %>% 
+    dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male"))
+  
+  # KM median results, survival probabilities and predicted from extrapolations ----
+  medianResults <- dplyr::bind_rows( 
+    medkmcombined ,
+    medkmcombined_age ,
+    predmedmeanfinal,
+    predmedmeanfinalage,
+    predmedmeanfinalageS,
+    predmedmeanfinalt,
+    predmedmeanfinalaget,
+    predmedmeanfinalageSt) %>%
+    dplyr::mutate(Database = db.name) %>% 
+    dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male")) 
+  
+  # hazard over time results -----
+  hazOverTimeResults <- dplyr::bind_rows( 
+    hotkmcombined , 
+    hotkmcombined_age, 
+    hazardotfinal, 
+    hazardotfinalage,
+    hazardotfinalageS,
+    hazardotfinalt, 
+    hazardotfinalaget,
+    hazardotfinalageSt) %>%
+    dplyr::mutate(Database = db.name) %>% 
+    dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex,  "Male"))
+  
+  
+  # GOF results for extrapolated results (adjusted and stratified)
+  GOFResults <- dplyr::bind_rows( 
+    goffinal,
+    goffinalage,
+    goffinalageS,
+    goffinalt,
+    goffinalaget,
+    goffinalageSt
+  ) %>%
+    dplyr::mutate(Database = db.name) %>% 
+    dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male")) %>% 
+    dplyr::select(!c(N, events, censored)) 
+  
+  # parameters of the extrapolated models
+  ExtrpolationParameters <- dplyr::bind_rows(
+    parametersfinal ,
+    parametersfinalage,
+    parametersfinalageS,
+    parametersfinalt ,
+    parametersfinalaget,
+    parametersfinalageSt
+  ) %>%
+    dplyr::mutate(Database = db.name) %>%
+    dplyr::relocate(Cancer, Method, Stratification, Adjustment, Sex, Age, Database) %>% 
+    dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male"))
+  
+  
+}
+
+} else {
+  
+  if(db.name != "ECI"){ 
   survivalResults <- dplyr::bind_rows(
     observedkmcombined ,  
     observedkmcombined_sex , 
@@ -555,7 +730,72 @@ ExtrpolationParameters <- dplyr::bind_rows(
     dplyr::mutate(Database = db.name) %>%
     dplyr::relocate(Cancer, Method, Stratification, Adjustment, Sex, Age, Database) %>% 
     dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male"))  
+
+  } else {
+    
+    survivalResults <- dplyr::bind_rows(
+      observedkmcombined ,  
+      observedkmcombined_age , 
+      extrapolatedfinal,
+      extrapolatedfinalage,
+      extrapolatedfinalageS) %>%
+      dplyr::mutate(Database = db.name) %>% 
+      dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male")) %>% 
+      dplyr::select(!c(n.risk, n.event, n.censor, std.error))
+    
+    #risk table ----
+    riskTableResults <- dplyr::bind_rows(
+      risktableskm , 
+      risktableskm_age 
+    ) %>%
+      dplyr::mutate(Database = db.name) %>% 
+      dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male"))
+    
+    # KM median results, survival probabilites and predicted from extrapolations ----
+    medianResults <- dplyr::bind_rows( 
+      medkmcombined ,
+      medkmcombined_age ,
+      predmedmeanfinal,
+      predmedmeanfinalage,
+      predmedmeanfinalageS) %>%
+      dplyr::mutate(Database = db.name) %>% 
+      dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male")) 
+    
+    # hazard over time results -----
+    hazOverTimeResults <- dplyr::bind_rows( 
+      hotkmcombined , 
+      hotkmcombined_age, 
+      hazardotfinal, 
+      hazardotfinalage,
+      hazardotfinalageS) %>%
+      dplyr::mutate(Database = db.name) %>% 
+      dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex,  "Male"))
+    
+    
+    # GOF results for extrapolated results (adjusted and stratified)
+    GOFResults <- dplyr::bind_rows( 
+      goffinal,
+      goffinalage,
+      goffinalageS
+    ) %>%
+      dplyr::mutate(Database = db.name) %>% 
+      dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male")) %>% 
+      dplyr::select(!c(N, events, censored)) 
+    
+    # parameters of the extrapolated models
+    ExtrpolationParameters <- dplyr::bind_rows(
+      parametersfinal ,
+      parametersfinalage,
+      parametersfinalageS
+    ) %>%
+      dplyr::mutate(Database = db.name) %>%
+      dplyr::relocate(Cancer, Method, Stratification, Adjustment, Sex, Age, Database) %>% 
+      dplyr::mutate(Sex = if_else(!(grepl("Prostate", Cancer, fixed = TRUE)), Sex, "Male"))  
+    
+    
+  }
   
+    
 }
 
 
@@ -648,25 +888,8 @@ AnalysisRunSummary <-
   dplyr::mutate(Database = cdm_name(cdm),
          Run = ifelse(is.na(Run), "No", Run))
 
-
-# snapshot the cdm
-snapshotcdm <- CDMConnector::snapshot(cdm) %>% 
-  mutate(Database = CDMConnector::cdm_name(cdm)) %>% 
-  mutate(StudyPeriodStartDate = startdate)
-
-#get attrition for the cohorts and add cohort identification
-attritioncdm <- CDMConnector::cohort_attrition(cdm$outcome) %>% 
-  dplyr::left_join(
-    cohortSet(cdm$outcome) %>% select(c("cohort_definition_id", "cohort_name")),
-    by = join_by(cohort_definition_id),
-    relationship = "many-to-many",
-    keep = FALSE
-  ) %>% 
-  dplyr::relocate(cohort_name) %>% 
-  dplyr::mutate(Database = cdm_name(cdm)) %>% 
-  dplyr::rename(Cancer = cohort_name)
-
 # save results as csv for data partner can review
+print(paste0("SAVING RESULTS"))
 info(logger, "SAVING RESULTS")
 readr::write_csv(survivalResults, paste0(here::here(output.folder),"/", cdm_name(cdm), "_survival_estimates.csv"))
 readr::write_csv(riskTableResults, paste0(here::here(output.folder),"/", cdm_name(cdm), "_risk_table.csv"))
@@ -678,7 +901,6 @@ readr::write_csv(AnalysisRunSummary, paste0(here::here(output.folder),"/", cdm_n
 readr::write_csv(tableone_final, paste0(here::here(output.folder),"/", cdm_name(cdm), "_tableone_summary.csv"))
 readr::write_csv(snapshotcdm, paste0(here::here(output.folder),"/", cdm_name(cdm), "_cdm_snapshot.csv"))
 readr::write_csv(attritioncdm, paste0(here::here(output.folder),"/", cdm_name(cdm), "_cohort_attrition.csv"))
-info(logger, "SAVED RESULTS")
 
 # # Time taken
 x <- abs(as.numeric(Sys.time()-start, units="secs"))
@@ -689,6 +911,7 @@ info(logger, paste0("Study took: ",
                               60,  x %% 60 %/% 1)))
 
 print(paste0("SAVED RESULTS")) 
+info(logger, "SAVED RESULTS")
 # zip results
 print("Zipping results to output folder")
 
